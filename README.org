@@ -1,0 +1,30 @@
+* network-manager
+
+  This module provides a command to manage your keyboard brightness,
+  it uses a direct connection to dbus to adjust the brightness.
+
+** requires
+
+   dbus -- https://github.com/death/dbus
+
+   If you are planning on using this it's probably best if you
+   use it in conjunction with [[http://www.quicklisp.org/beta/][Quicklisp]].
+
+** usage
+
+   #+BEGIN_SRC lisp
+   (asdf:oos 'asdf:load-op :stumpwm.contrib.network-manager)
+   #+END_SRC
+
+   In your ~/.stumpwmrc
+
+*** Commands
+
+**** nm-select-access-point
+
+     Connect to an Access Points in range which has a configured
+     connection in network manager.
+
+** license
+
+   GPLv3
