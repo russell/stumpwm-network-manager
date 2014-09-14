@@ -23,6 +23,6 @@
   :description "Network Manager interface for StumpWM."
   :author "Russell Sim <russell.sim@gmail.com>"
   :license "GPLv3"
-  :depends-on (#:stumpwm #:dbus #:flexi-streams)
+  :depends-on (#:stumpwm #:alexandria #:flexi-streams #:stumpwm.contrib.dbus)
   :components ((:file "package")
                (:file "network-manager")))

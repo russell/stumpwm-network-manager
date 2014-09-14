@@ -21,26 +21,12 @@
 (defpackage #:stumpwm.contrib.network-manager
   (:use #:cl)
   (:import-from #:dbus
-                #:bus-connection
-                #:connection-next-serial
-                #:encode-message
-                #:error-message
                 #:interface-name
                 #:list-object-interfaces
-                #:make-object-from-introspection
-                #:message-no-auto-start
-                #:message-no-reply-expected
-                #:message-signature
-                #:method-return-message
-                #:object-connection
-                #:object-destination
-                #:object-invoke
                 #:object-path
-                #:send-message
-                #:signature-for-method
-                #:system-server-addresses
-                #:wait-for-reply
-                #:with-open-bus)
+                #:message-signature
+                #:object-connection
+                #:system-server-addresses)
   (:import-from #:flexi-streams
                 #:octets-to-string)
   (:import-from #:alexandria
@@ -51,4 +37,19 @@
                 #:defcommand
                 #:select-from-menu
                 #:current-screen
-                #:add-screen-mode-line-formatter))
+                #:add-screen-mode-line-formatter)
+  (:import-from #:stumpwm.contrib.dbus
+                #:make-object-from-introspection
+                #:object-invoke
+                #:with-introspected-object
+                #:make-future
+                #:attach
+                #:future-values
+                #:future-finished-p
+                #:futurep
+                #:list-object-interfaces
+                #:interface-name
+                #:alet
+                #:finish
+                #:with-futures
+                ))

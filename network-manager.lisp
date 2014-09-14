@@ -145,53 +145,7 @@
   element)
 
 
-
-(defun invoke-method (connection member
-                      &key path signature arguments interface destination
-                        no-reply no-auto-start asynchronous
-                        (endianness :little-endian))
-  (let ((serial (connection-next-serial connection)))
-    (send-message
-     (encode-message endianness :method-call
-                     (logior (if no-reply message-no-reply-expected 0)
-                             (if no-auto-start message-no-auto-start 0))
-                     1 serial path interface member nil nil
-                     destination nil signature arguments)
-     connection)
-    (if (or no-reply asynchronous)
-        serial
-        (multiple-value-bind (body message)
-            (wait-for-reply serial connection)
-          (etypecase message
-            (method-return-message
-             (ecase (message-signature message)
-               ("s"
-                (values-list body))
-               ("ao"
-                (values-list body))))
-            (error-message (error 'method-error :arguments body)))))))
-
-(defun object-invoke (object interface-name method-name &rest args)
-  (invoke-method (object-connection object)
-                 method-name
-                 :path (object-path object)
-                 :interface interface-name
-                 :destination (object-destination object)
-                 :signature (signature-for-method method-name
-                                                  interface-name
-                                                  object)
-                 :arguments args))
-
-(defmacro with-introspected-object ((name bus path destination) &body forms)
-  (with-gensyms (object)
-    `(let ((,object (make-object-from-introspection (bus-connection ,bus)
-                                                    ,path ,destination)))
-       (flet ((,name (interface-name method-name &rest args)
-                (apply #'object-invoke ,object interface-name method-name args)))
-         ,@forms))))
-
 (defparameter *object-paths* (make-hash-table))
-(gethash )
 
 (defparameter *device-classes*
   '(("org.freedesktop.NetworkManager.Device.Wireless" . device-wifi)))
@@ -200,9 +154,6 @@
   ((dbus-object
     :accessor dbus-object
     :initarg :dbus-object)
-   (dbus-connection
-    :accessor dbus-connection
-    :initarg :dbus-connection)
    (dbus-path
     :accessor dbus-path
     :initarg :dbus-path)
@@ -225,16 +176,29 @@
 (defmethod object-path (object)
   (object-path (dbus-object object)))
 
-(defmethod initialize-instance :after ((instance network-manager-object)
-                                       &key
-                                         dbus-connection
-                                         dbus-path
-                                       &allow-other-keys)
-  (setf (dbus-object instance)
-        (make-object-from-introspection
-         (bus-connection connection)
-         dbus-path
-         "org.freedesktop.NetworkManager")))
+(defmethod initialize-instance :around ((instance network-manager-object)
+                                        &key
+                                        dbus-path
+                                        dbus-object
+                                        &allow-other-keys)
+  (cond
+    (dbus-path
+     (prog1
+         (call-next-method)
+       (setf (dbus-object instance)
+             (make-object-from-introspection
+              dbus-path
+              "org.freedesktop.NetworkManager"))))
+    (t
+     (let ((future (make-future))
+           (object (call-next-method)))
+       (when dbus-object
+        (setf (slot-value object 'dbus-path) (object-path dbus-object)))
+       (finish future object)
+       (print future)
+       (attach future (lambda (a) "called me"))
+       future))))
+
 
 
 
@@ -254,24 +218,47 @@
           (nm "org.freedesktop.NetworkManager" "state"))))
 
 
-(defun list-devices (&optional (connection *dbus-connection*))
-  (mapcar
-   #'get-device
-   (with-introspected-object (nm connection "/org/freedesktop/NetworkManager"
-                                 "org.freedesktop.NetworkManager")
-     (nm "org.freedesktop.NetworkManager" "GetDevices"))))
+(defun futures-mapcar (function list cb)
+  "Map across a list of item with a function that returns a future.
+Then wait unit they are all resolved before calling CB."
+  (let (futures-list)
+   (flet ((call-back (result)
+            (declare (ignore result))
+            (when (every #'future-finished-p futures-list)
+              (funcall cb (mapcar #'future-values futures-list)))))
+     (if list
+         (dolist (item list)
+           (attach (car (push (funcall function item) futures-list))
+                   #'call-back))
+         (funcall cb nil)))))
 
 
-(defun get-device (device &optional (connection *dbus-connection*))
+(defun list-devices ()
+  (let ((future (make-future)))
+    (with-introspected-object (nm "/org/freedesktop/NetworkManager"
+                                  "org.freedesktop.NetworkManager")
+      (attach (nm "org.freedesktop.NetworkManager" "GetDevices")
+              (lambda (devices)
+                (print devices)
+                (flet ((introspect (path)
+                         (make-object-from-introspection path "org.freedesktop.NetworkManager")))
+                 (with-futures (devices (mapcar #'introspect devices))
+                   (with-futures (devices (mapcar (compose #'get-device #'car) devices))
+                     (finish future devices))))
+                )))
+    future))
+
+
+(defun get-device (device)
   "Return a device"
   (let* ((interface (find "org.freedesktop.NetworkManager.Device."
-                          (mapcar #'interface-name (list-object-interfaces object))
+                          (mapcar #'interface-name (list-object-interfaces device))
                           :test (lambda (e a) (equal (subseq a 0 (length e))
                                                      e))))
          (device-class (or (assoc-value *device-classes* interface
                                         :test #'equal)
                            'device)))
-    (make-instance device-class :dbus-path device)))
+    (make-instance device-class :dbus-object device)))
 
 
 (defmethod device-active-access-point ((device device-wifi))
@@ -451,17 +438,20 @@ manager and the DEVICE they were found on."
     :accessor active-connection-connection
     :initarg :connection)))
 
-(defun get-active-connection (active-connection
-                              &key (connection *dbus-connection*))
+(defun get-active-connection (active-connection)
   "Return an active connection"
   (make-instance 'active-connection :dbus-path active-connection))
 
-(defun active-connections (&optional (connection *dbus-connection*))
-  (mapcar #'get-active-connection
-   (with-introspected-object (nm connection "/org/freedesktop/NetworkManager"
+(defun active-connections ()
+  (let ((future (make-future)))
+   (with-introspected-object (nm "/org/freedesktop/NetworkManager"
                                  "org.freedesktop.NetworkManager")
-     (nm "org.freedesktop.DBus.Properties" "Get"
-         "org.freedesktop.NetworkManager" "ActiveConnections"))))
+     (alet ((connections (nm "org.freedesktop.DBus.Properties" "Get"
+                            "org.freedesktop.NetworkManager" "ActiveConnections")))
+       (futures-mapcar #'get-active-connection connections
+                       (lambda (results)
+                         (finish future (mapcar #'car results))))))
+    future))
 
 (defmethod active-connection-devices ((active-connection active-connection))
   (if (slot-boundp active-connection 'device)
