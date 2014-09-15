@@ -21,19 +21,31 @@
 (defpackage #:stumpwm.contrib.network-manager
   (:use #:cl)
   (:import-from #:dbus
-                #:system-server-addresses
-                #:with-open-bus
+                #:bus-connection
+                #:connection-next-serial
+                #:encode-message
+                #:error-message
+                #:interface-name
+                #:list-object-interfaces
+                #:make-object-from-introspection
+                #:message-no-auto-start
+                #:message-no-reply-expected
+                #:message-signature
+                #:method-return-message
+                #:object-connection
+                #:object-destination
                 #:object-invoke
                 #:object-path
-                #:make-object-from-introspection
-                #:with-introspected-object
-                #:bus-connection
-                #:list-object-interfaces
-                #:interface-name)
+                #:send-message
+                #:signature-for-method
+                #:system-server-addresses
+                #:wait-for-reply
+                #:with-open-bus)
   (:import-from #:flexi-streams
                 #:octets-to-string)
   (:import-from #:alexandria
                 #:compose
+                #:with-gensyms
                 #:assoc-value)
   (:import-from #:stumpwm
                 #:defcommand

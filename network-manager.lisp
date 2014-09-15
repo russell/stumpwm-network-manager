@@ -144,18 +144,73 @@
   (setf (car element) (translate-camelcase-name (car element)))
   element)
 
+
+
+(defun invoke-method (connection member
+                      &key path signature arguments interface destination
+                        no-reply no-auto-start asynchronous
+                        (endianness :little-endian))
+  (let ((serial (connection-next-serial connection)))
+    (send-message
+     (encode-message endianness :method-call
+                     (logior (if no-reply message-no-reply-expected 0)
+                             (if no-auto-start message-no-auto-start 0))
+                     1 serial path interface member nil nil
+                     destination nil signature arguments)
+     connection)
+    (if (or no-reply asynchronous)
+        serial
+        (multiple-value-bind (body message)
+            (wait-for-reply serial connection)
+          (etypecase message
+            (method-return-message
+             (ecase (message-signature message)
+               ("s"
+                (values-list body))
+               ("ao"
+                (values-list body))))
+            (error-message (error 'method-error :arguments body)))))))
+
+(defun object-invoke (object interface-name method-name &rest args)
+  (invoke-method (object-connection object)
+                 method-name
+                 :path (object-path object)
+                 :interface interface-name
+                 :destination (object-destination object)
+                 :signature (signature-for-method method-name
+                                                  interface-name
+                                                  object)
+                 :arguments args))
+
+(defmacro with-introspected-object ((name bus path destination) &body forms)
+  (with-gensyms (object)
+    `(let ((,object (make-object-from-introspection (bus-connection ,bus)
+                                                    ,path ,destination)))
+       (flet ((,name (interface-name method-name &rest args)
+                (apply #'object-invoke ,object interface-name method-name args)))
+         ,@forms))))
+
+(defparameter *object-paths* (make-hash-table))
+(gethash )
+
 (defparameter *device-classes*
   '(("org.freedesktop.NetworkManager.Device.Wireless" . device-wifi)))
 
-(defclass network-manage-object ()
+(defclass network-manager-object ()
   ((dbus-object
     :accessor dbus-object
     :initarg :dbus-object)
+   (dbus-connection
+    :accessor dbus-connection
+    :initarg :dbus-connection)
+   (dbus-path
+    :accessor dbus-path
+    :initarg :dbus-path)
    (dbus-primary-interface
     :accessor dbus-primary-interface
     :initarg :dbus-primary-interface)))
 
-(defclass device (network-manage-object)
+(defclass device (network-manager-object)
   ((dbus-primary-interface
     :accessor dbus-primary-interface
     :initform "org.freedesktop.NetworkManager.Device"
@@ -169,6 +224,18 @@
 
 (defmethod object-path (object)
   (object-path (dbus-object object)))
+
+(defmethod initialize-instance :after ((instance network-manager-object)
+                                       &key
+                                         dbus-connection
+                                         dbus-path
+                                       &allow-other-keys)
+  (setf (dbus-object instance)
+        (make-object-from-introspection
+         (bus-connection connection)
+         dbus-path
+         "org.freedesktop.NetworkManager")))
+
 
 
 (defmethod details (dbus-object &optional (connection *dbus-connection*))
@@ -197,18 +264,14 @@
 
 (defun get-device (device &optional (connection *dbus-connection*))
   "Return a device"
-  (let* ((object (make-object-from-introspection
-                  (bus-connection connection)
-                  device
-                  "org.freedesktop.NetworkManager"))
-         (interface (find "org.freedesktop.NetworkManager.Device."
+  (let* ((interface (find "org.freedesktop.NetworkManager.Device."
                           (mapcar #'interface-name (list-object-interfaces object))
                           :test (lambda (e a) (equal (subseq a 0 (length e))
                                                      e))))
          (device-class (or (assoc-value *device-classes* interface
                                         :test #'equal)
                            'device)))
-    (make-instance device-class :dbus-object object)))
+    (make-instance device-class :dbus-path device)))
 
 
 (defmethod device-active-access-point ((device device-wifi))
@@ -226,7 +289,7 @@
         "org.freedesktop.NetworkManager.Device")))
 
 
-(defclass connection (network-manage-object)
+(defclass connection (network-manager-object)
   ((dbus-primary-interface
     :accessor dbus-primary-interface
     :initform "org.freedesktop.NetworkManager.Settings.Connection"
@@ -236,11 +299,7 @@
 
 (defun get-connection (connection-path &optional (connection *dbus-connection*))
   "Return a connection"
-  (let* ((object (make-object-from-introspection
-                  (bus-connection connection)
-                  connection-path
-                  "org.freedesktop.NetworkManager")))
-    (make-instance 'connection :dbus-object object)))
+  (make-instance 'connection :dbus-path connection-path))
 
 (defmethod connection-ssid ((connection connection))
   (cadr (assoc :ssid
@@ -307,7 +366,7 @@
                        "org.freedesktop.DBus.Properties" "Get"
                        "org.freedesktop.NetworkManager.Device" "State")))
 
-(defclass access-point (network-manage-object)
+(defclass access-point (network-manager-object)
   ((dbus-primary-interface
     :accessor dbus-primary-interface
     :initform "org.freedesktop.NetworkManager.AccessPoint"
@@ -351,12 +410,7 @@
 
 
 (defun get-access-point (access-point &key device (connection *dbus-connection*))
-  "Return a device"
-  (let* ((object (make-object-from-introspection
-                  (bus-connection connection)
-                  access-point
-                  "org.freedesktop.NetworkManager")))
-    (make-instance 'access-point :dbus-object object :devices (list device))))
+  (make-instance 'access-point :dbus-path access-point :devices (list device)))
 
 
 (defmethod activate-connection ((connection connection) (device device)
@@ -385,7 +439,7 @@ manager and the DEVICE they were found on."
               :collect (list connection (cadr access-point))))))
 
 
-(defclass active-connection (network-manage-object)
+(defclass active-connection (network-manager-object)
   ((dbus-primary-interface
     :accessor dbus-primary-interface
     :initform "org.freedesktop.NetworkManager.Connection.Active"
@@ -400,11 +454,7 @@ manager and the DEVICE they were found on."
 (defun get-active-connection (active-connection
                               &key (connection *dbus-connection*))
   "Return an active connection"
-  (let* ((object (make-object-from-introspection
-                  (bus-connection connection)
-                  active-connection
-                  "org.freedesktop.NetworkManager")))
-    (make-instance 'active-connection :dbus-object object)))
+  (make-instance 'active-connection :dbus-path active-connection))
 
 (defun active-connections (&optional (connection *dbus-connection*))
   (mapcar #'get-active-connection
