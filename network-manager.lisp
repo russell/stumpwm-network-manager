@@ -315,12 +315,16 @@ Then wait unit they are all resolved before calling CB."
                                      (dbus-primary-interface connection)
                                      "GetSettings"))))))
 
-(defun list-connections (&optional (connection *dbus-connection*))
-  (mapcar #'get-connection
-          (with-introspected-object (nm connection
-                                        "/org/freedesktop/NetworkManager/Settings"
-                                        "org.freedesktop.NetworkManager")
-            (nm "org.freedesktop.NetworkManager.Settings" "ListConnections"))))
+(defun list-connections ()
+  (let ((future (make-future)))
+          (with-introspected-object (nm
+                                     "/org/freedesktop/NetworkManager/Settings"
+                                     "org.freedesktop.NetworkManager")
+            (alet ((connections (nm "org.freedesktop.NetworkManager.Settings"
+                                     "ListConnections")))
+              (with-futures (connections (mapcar #'get-connection connections))
+                (finish future connections))))
+    future))
 
 (defun list-wifi-access-points ()
   (loop :for device :in (list-devices-with-interface
