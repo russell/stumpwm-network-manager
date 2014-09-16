@@ -202,16 +202,16 @@
 
 
 
-(defmethod details (dbus-object &optional (connection *dbus-connection*))
-  (with-introspected-object (nm connection (object-path dbus-object)
+(defmethod details (dbus-object)
+  (with-introspected-object (nm (object-path dbus-object)
                                 "org.freedesktop.NetworkManager")
     (mapcar #'convert-key-to-keyword
      (nm "org.freedesktop.DBus.Properties" "GetAll"
          (dbus-primary-interface dbus-object)))))
 
 
-(defun current-state (&optional (connection *dbus-connection*))
-  (with-introspected-object (nm connection
+(defun current-state ()
+  (with-introspected-object (nm
                                 "/org/freedesktop/NetworkManager"
                                 "org.freedesktop.NetworkManager")
     (getf nm-state
@@ -269,8 +269,8 @@ Then wait unit they are all resolved before calling CB."
                   "ActiveAccessPoint")))
 
 
-(defun device-details (device &optional (connection *dbus-connection*))
-  (with-introspected-object (nm connection device
+(defun device-details (device)
+  (with-introspected-object (nm device
                                 "org.freedesktop.NetworkManager")
     (nm "org.freedesktop.DBus.Properties" "GetAll"
         "org.freedesktop.NetworkManager.Device")))
@@ -284,7 +284,7 @@ Then wait unit they are all resolved before calling CB."
    (settings
     :accessor connection-settings)))
 
-(defun get-connection (connection-path &optional (connection *dbus-connection*))
+(defun get-connection (connection-path)
   "Return a connection"
   (make-instance 'connection :dbus-path connection-path))
 
@@ -382,8 +382,8 @@ Then wait unit they are all resolved before calling CB."
                  "org.freedesktop.DBus.Properties" "Get"
                  "org.freedesktop.NetworkManager.AccessPoint" "Strength"))
 
-(defmethod details ((dbus-object access-point) &optional (connection *dbus-connection*))
-  (with-introspected-object (nm connection (object-path dbus-object)
+(defmethod details ((dbus-object access-point))
+  (with-introspected-object (nm (object-path dbus-object)
                                 "org.freedesktop.NetworkManager")
     (flet ((translate-access-point (element)
              (convert-key-to-keyword element)
@@ -401,9 +401,8 @@ Then wait unit they are all resolved before calling CB."
 
 
 (defmethod activate-connection ((connection connection) (device device)
-                                specific-object
-                            &optional (dbus-connection *dbus-connection*))
-  (with-introspected-object (nm dbus-connection
+                                specific-object)
+  (with-introspected-object (nm
                                 "/org/freedesktop/NetworkManager"
                                 "org.freedesktop.NetworkManager")
     (nm "org.freedesktop.NetworkManager" "ActivateConnection"
