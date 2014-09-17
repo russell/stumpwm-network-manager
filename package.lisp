@@ -52,4 +52,5 @@
                 #:alet
                 #:finish
                 #:with-futures
+                #:with-future
                 ))

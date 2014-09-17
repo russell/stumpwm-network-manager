@@ -327,16 +327,19 @@ Then wait unit they are all resolved before calling CB."
     future))
 
 (defun list-wifi-access-points ()
-  (loop :for device :in (list-devices-with-interface
-                          "org.freedesktop.NetworkManager.Device.Wireless")
-        :append (list-access-points device)))
+  (with-future (future)
+    (alet ((devices (list-devices-with-interface
+                     "org.freedesktop.NetworkManager.Device.Wireless")))
+      (with-futures (access-points (mapcar #'list-access-points devices))
+        (finish future (apply #'append (car access-points)))))))
 
 (defun list-devices-with-interface (interface)
   "List all the connections with a particular interface."
-  (remove-if #'null
-             (mapcar
-              (has-interface interface)
-              (list-devices))))
+  (alet ((devices (list-devices)))
+    (remove-if #'null
+               (mapcar
+                (has-interface interface)
+                devices))))
 
 (defun has-interface (name)
   (lambda (object)
@@ -370,10 +373,11 @@ Then wait unit they are all resolved before calling CB."
   (car (access-point-devices device)))
 
 (defmethod list-access-points ((device device-wifi))
-  (mapcar (lambda (ap) (get-access-point ap :device device))
-   (object-invoke (dbus-object device)
-                  "org.freedesktop.NetworkManager.Device.Wireless"
-                  "GetAccessPoints")))
+  (alet ((access-points (object-invoke (dbus-object device)
+                          "org.freedesktop.NetworkManager.Device.Wireless"
+                          "GetAccessPoints")))
+    (mapcar (lambda (ap) (get-access-point ap :device device))
+            access-points)))
 
 (defmethod access-point-ssid ((access-point access-point))
   (octets-to-string
