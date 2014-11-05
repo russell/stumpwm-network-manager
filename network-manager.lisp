@@ -178,29 +178,33 @@
 
 (defmethod initialize-instance :around ((instance network-manager-object)
                                         &key
-                                        dbus-path
-                                        dbus-object
+                                          future
+                                          dbus-path
+                                          dbus-object
                                         &allow-other-keys)
   (cond
     (dbus-path
-     (prog1
-         (call-next-method)
-       (setf (dbus-object instance)
-             (make-object-from-introspection
-              dbus-path
-              "org.freedesktop.NetworkManager"))))
+     (alet ((object (make-object-from-introspection
+                     dbus-path
+                     "org.freedesktop.NetworkManager")))
+       (setf (dbus-object instance) object)
+       (setf (slot-value instance 'dbus-path) (object-path object))
+       (call-next-method)
+       (finish future instance)))
     (t
-     (let ((future (make-future))
-           (object (call-next-method)))
+     (let ((object (call-next-method)))
        (when dbus-object
-        (setf (slot-value object 'dbus-path) (object-path dbus-object)))
-       (finish future object)
-       (print future)
-       (attach future (lambda (a) "called me"))
-       future))))
+         (setf (slot-value object 'dbus-path) (object-path dbus-object)))
+       (call-next-method)
+       (finish future object)))))
 
 
-
+(defun amake-instance (class cb &rest initargs &key &allow-other-keys)
+  "Asynchronous make instance.  CLASS is the class to be created. CB
+the callback that will be called with object once it's been
+initialised."
+  (with-future (future)
+    (apply #'make-instance class :future cb initargs)))
 
 (defmethod details (dbus-object)
   (with-introspected-object (nm (object-path dbus-object)
@@ -242,31 +246,34 @@ Then wait unit they are all resolved before calling CB."
                 (print devices)
                 (flet ((introspect (path)
                          (make-object-from-introspection path "org.freedesktop.NetworkManager")))
-                 (with-futures (devices (mapcar #'introspect devices))
-                   (with-futures (devices (mapcar (compose #'get-device #'car) devices))
-                     (finish future devices))))
-                )))
+                  (with-futures (devices (mapcar #'introspect devices))
+                    (with-futures (devices (mapcar (compose #'get-device #'car) devices))
+                     (finish future devices)))))))
     future))
 
 
 (defun get-device (device)
   "Return a device"
-  (let* ((interface (find "org.freedesktop.NetworkManager.Device."
-                          (mapcar #'interface-name (list-object-interfaces device))
-                          :test (lambda (e a) (equal (subseq a 0 (length e))
-                                                     e))))
-         (device-class (or (assoc-value *device-classes* interface
-                                        :test #'equal)
-                           'device)))
-    (make-instance device-class :dbus-object device)))
+  (with-future (future)
+    (let* ((interface (find "org.freedesktop.NetworkManager.Device."
+                            (mapcar #'interface-name (list-object-interfaces device))
+                            :test (lambda (e a) (equal (subseq a 0 (length e))
+                                                       e))))
+           (device-class (or (assoc-value *device-classes* interface
+                                          :test #'equal)
+                             'device)))
+      (amake-instance device-class future :dbus-object device))))
 
 
 (defmethod device-active-access-point ((device device-wifi))
-  (get-access-point
-   (object-invoke (dbus-object device)
-                  "org.freedesktop.DBus.Properties" "Get"
-                  (dbus-primary-interface device)
-                  "ActiveAccessPoint")))
+  (with-future (future)
+    (alet ((active-access-point
+            (object-invoke (dbus-object device)
+                           "org.freedesktop.DBus.Properties" "Get"
+                           (dbus-primary-interface device)
+                           "ActiveAccessPoint")))
+      (alet ((access-point (get-access-point active-access-point :device device)))
+        (finish future access-point)))))
 
 
 (defun device-details (device)
@@ -404,8 +411,11 @@ Then wait unit they are all resolved before calling CB."
                   (dbus-primary-interface dbus-object))))))
 
 
-(defun get-access-point (access-point &key device (connection *dbus-connection*))
-  (make-instance 'access-point :dbus-path access-point :devices (list device)))
+(defun get-access-point (access-point &key device)
+  (with-future (future)
+    (amake-instance 'access-point future
+                    :dbus-path access-point
+                    :devices (list device))))
 
 
 (defmethod activate-connection ((connection connection) (device device)
@@ -447,7 +457,8 @@ manager and the DEVICE they were found on."
 
 (defun get-active-connection (active-connection)
   "Return an active connection"
-  (make-instance 'active-connection :dbus-path active-connection))
+  (with-future (future)
+    (amake-instance 'active-connection future :dbus-path active-connection)))
 
 (defun active-connections ()
   (let ((future (make-future)))
@@ -455,51 +466,71 @@ manager and the DEVICE they were found on."
                                  "org.freedesktop.NetworkManager")
      (alet ((connections (nm "org.freedesktop.DBus.Properties" "Get"
                             "org.freedesktop.NetworkManager" "ActiveConnections")))
-       (futures-mapcar #'get-active-connection connections
-                       (lambda (results)
-                         (finish future (mapcar #'car results))))))
+       (with-futures (results (mapcar #'get-active-connection connections))
+         (finish future (mapcar #'car results)))))
     future))
 
 (defmethod active-connection-devices ((active-connection active-connection))
-  (if (slot-boundp active-connection 'device)
-      (slot-value active-connection 'device)
-      (setf (active-connection-devices active-connection)
-            (mapcar #'get-device
-             (object-invoke (dbus-object active-connection)
-                            "org.freedesktop.DBus.Properties"
-                            "Get"
-                            (dbus-primary-interface active-connection)
-                            "Devices")))))
+  (with-future (future)
+    (if (slot-boundp active-connection 'device)
+        (finish future (slot-value active-connection 'device))
+        (progn
+          (alet ((devices (object-invoke (dbus-object active-connection)
+                                         "org.freedesktop.DBus.Properties"
+                                         "Get"
+                                         (dbus-primary-interface active-connection)
+                                         "Devices")))
+            (flet ((introspect (path)
+                     (make-object-from-introspection
+                      path
+                      "org.freedesktop.NetworkManager")))
+              (with-futures (devices (mapcar #'introspect devices))
+                (with-futures (devices (mapcar (compose #'get-device #'car) devices))
+                  (let ((devices (mapcar #'car devices)))
+                    (setf (active-connection-devices active-connection)
+                          devices)
+                    (finish future devices))))))))))
 
 
 (defmethod active-connection-connection ((active-connection active-connection))
+  (print active-connection)
   (if (slot-boundp active-connection 'connection)
       (slot-value active-connection 'connection)
-      (setf (active-connection-connection active-connection)
-            (get-connection
-             (object-invoke (dbus-object active-connection)
-                            "org.freedesktop.DBus.Properties"
-                            "Get"
-                            (dbus-primary-interface active-connection)
-                            "Connection")))))
+      (alet ((object-connection
+              (object-invoke (dbus-object active-connection)
+                             "org.freedesktop.DBus.Properties"
+                             "Get"
+                             (dbus-primary-interface active-connection)
+                             "Connection")))
+        (print object-connection)
+        (setf (active-connection-connection active-connection)
+              (get-connection object-connection)))))
 
 
 (defun current-connection-ids ()
-  (with-open-bus (*dbus-connection* (system-server-addresses))
-    (let ((connections (active-connections)))
-      (mapcar #'connection-id
-       (mapcar #'active-connection-connection connections)))))
+  (with-future (future)
+    (alet ((connections (active-connections)))
+      (with-futures (connections (mapcar #'active-connection-connection
+                                         connections))
+        (finish future (mapcar #'connection-id connections))))))
 
 
 (defun current-connection-signal ()
-  (with-open-bus (*dbus-connection* (system-server-addresses))
-    (loop
-      :for connection :in (active-connections)
-      :for device = (car (active-connection-devices connection))
-      :collect
-      (case (type-of device)
-        ('device-wifi
-         (access-point-strength (device-active-access-point device)))))))
+  (with-future (future)
+    (alet ((connections (active-connections)))
+      (with-futures (devices (mapcar #'active-connection-devices connections))
+        (let ((wifi-devices (remove-if-not
+                             (lambda (d) (eql (type-of d)
+                                              'device-wifi))
+                             (flatten devices))))
+          (with-futures (access-points (mapcar #'device-active-access-point
+                                               wifi-devices))
+            (let ((access-points (flatten access-points)))
+             (with-futures (wifi-strength (mapcar #'access-point-strength
+                                                  access-points))
+               (finish future (mapcar #'cons
+                                      access-points
+                                      (flatten wifi-strength)))))))))))
 
 
 (defcommand nm-select-access-point () ()

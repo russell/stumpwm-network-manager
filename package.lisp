@@ -31,6 +31,7 @@
                 #:octets-to-string)
   (:import-from #:alexandria
                 #:compose
+                #:flatten
                 #:with-gensyms
                 #:assoc-value)
   (:import-from #:stumpwm
